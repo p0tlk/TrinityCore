@@ -13451,10 +13451,16 @@ void Unit::_ExitVehicle(Position const* exitPosition)
     else
     {
         // Set exit position to vehicle position and use the current orientation
-        pos = vehicle->GetBase()->GetPosition();
+        // If the vehicle is on a transport, we either are passengers too now after m_vehicle->RemovePassenger
+        // or the transport is teleporting, and we are not a passenger.
+        if (vehicle->GetBase()->GetTransport() && GetTransport())
+            pos = vehicle->GetBase()->GetTransOffset();
+        else
+            pos = vehicle->GetBase()->GetPosition();
         pos.SetOrientation(GetOrientation());
 
         // Change exit position based on seat entry addon data
+        // Possible TODO? Might not mesh well with transport offsets?
         if (seatAddon)
         {
             if (seatAddon->ExitParameter == VehicleExitParameters::VehicleExitParamOffset)
@@ -14031,7 +14037,12 @@ void Unit::SetFacingTo(float ori, bool force)
         return;
 
     Movement::MoveSplineInit init(this);
-    init.MoveTo(GetPositionX(), GetPositionY(), GetPositionZ(), false);
+    // Do we even need MoveTo? Shauren says yes...
+    if (GetTransport())
+        init.MoveTo(GetTransOffsetX(), GetTransOffsetY(), GetTransOffsetZ(), false);
+    else
+        init.MoveTo(GetPositionX(), GetPositionY(), GetPositionZ(), false);
+    // For transports this is already disabled, keep for vehicles?
     if (HasUnitMovementFlag(MOVEMENTFLAG_ONTRANSPORT) && GetTransGUID())
         init.DisableTransportPathTransformations(); // It makes no sense to target global orientation
     init.SetFacing(ori);
@@ -14048,7 +14059,11 @@ void Unit::SetFacingToObject(WorldObject const* object, bool force)
 
     /// @todo figure out under what conditions creature will move towards object instead of facing it where it currently is.
     Movement::MoveSplineInit init(this);
-    init.MoveTo(GetPositionX(), GetPositionY(), GetPositionZ(), false);
+    // Do we even need MoveTo? ...
+    if (GetTransport())
+        init.MoveTo(GetTransOffsetX(), GetTransOffsetY(), GetTransOffsetZ(), false);
+    else
+        init.MoveTo(GetPositionX(), GetPositionY(), GetPositionZ(), false);
     init.SetFacing(GetAbsoluteAngle(object));   // when on transport, GetAbsoluteAngle will still return global coordinates (and angle) that needs transforming
 
     //GetMotionMaster()->LaunchMoveSpline(std::move(init), EVENT_FACE, MOTION_PRIORITY_HIGHEST);
