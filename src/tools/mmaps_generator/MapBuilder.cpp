@@ -599,6 +599,9 @@ namespace MMAP
         buildGameObject("Nd_Alliancegunship_Icecrown.wmo.vmo", 9150);
         buildGameObject("Nd_Hordegunship_Icecrown.wmo.vmo", 9151);
         buildGameObject("Icecrown_Elevator02.m2.vmo", 9248);
+        // Epoch
+        buildGameObject("Boat.wmo.vmo", 50000);
+        buildGameObject("DarkshoreBoat.wmo.vmo", 50001);
     }
 
     /**************************************************************************/
