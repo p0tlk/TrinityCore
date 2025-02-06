@@ -8203,10 +8203,18 @@ SpellCastResult Spell::CallScriptCheckCastHandlers()
 
         (*scritr)->_FinishScriptCall();
     }
+
+    uint32 custom_result = 0;
     FIRE_ID(m_spellInfo->events.id
         , Spell,OnCheckCast
         , TSSpell(this)
-        , TSMutableNumber<uint8>(reinterpret_cast<uint8_t*>(&retVal)));
+        , TSMutableNumber<uint8>(reinterpret_cast<uint8_t*>(&retVal))
+        , TSMutableNumber<uint32>(&custom_result)
+    );
+
+    if (retVal == SPELL_FAILED_CUSTOM_ERROR && custom_result)
+        m_customError = static_cast<SpellCustomErrors>(custom_result);
+
     return retVal;
 }
 
