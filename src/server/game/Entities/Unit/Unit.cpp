@@ -5889,17 +5889,32 @@ bool Unit::Attack(Unit* victim, bool meleeAttack)
     //if (GetTypeId() == TYPEID_UNIT)
     //    ToCreature()->SetCombatStartPosition(GetPositionX(), GetPositionY(), GetPositionZ());
 
-    if (creature && !IsControlledByPlayer())
+    if (creature)
     {
-        EngageWithTarget(victim); // ensure that anything we're attacking has threat
+        bool engage = false;
+        if (! IsControlledByPlayer())
+        {
+            engage = true;
+        }
+        else
+        {
+            Player* player = creature->GetControllingPlayer();
+            if (player && player->IsInCombatWith(victim))
+                engage = true;
+        }
 
-        creature->SendAIReaction(AI_REACTION_HOSTILE);
-        creature->CallAssistance();
-
-        creature->SetAssistanceTimer(sWorld->getIntConfig(CONFIG_CREATURE_FAMILY_ASSISTANCE_PERIOD));
-
-        // Remove emote state - will be restored on creature reset
-        SetEmoteState(EMOTE_ONESHOT_NONE);
+        if (engage)
+        {
+            EngageWithTarget(victim); // ensure that anything we're attacking has threat
+    
+            creature->SendAIReaction(AI_REACTION_HOSTILE);
+            creature->CallAssistance();
+    
+            creature->SetAssistanceTimer(sWorld->getIntConfig(CONFIG_CREATURE_FAMILY_ASSISTANCE_PERIOD));
+    
+            // Remove emote state - will be restored on creature reset
+            SetEmoteState(EMOTE_ONESHOT_NONE);
+        }
     }
 
     // delay offhand weapon attack by 50% of the base attack time
