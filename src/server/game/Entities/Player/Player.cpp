@@ -2208,7 +2208,15 @@ void Player::RegenerateHealth(uint32 diff)
 
         if (! IsInCombat())
         {
-            addValue *= GetTotalAuraMultiplier(SPELL_AURA_MOD_HEALTH_REGEN_PERCENT);
+            addValue *= GetTotalAuraMultiplier(SPELL_AURA_MOD_HEALTH_REGEN_PERCENT); PUT BACK
+
+            // Food
+            float food = 0.0f;
+            AuraEffectList const& regenAuras = GetAuraEffectsByType(SPELL_AURA_MOD_REGEN);
+            for (AuraEffect const* aurEff : regenAuras)
+                food += (float(aurEff->GetAmount()) * 0.4f) * 0.5f;
+
+            addValue += food;
         }
         else if (HasAuraType(SPELL_AURA_MOD_REGEN_DURING_COMBAT))
             addValue *= GetTotalAuraModifier(SPELL_AURA_MOD_REGEN_DURING_COMBAT) / 100.0f;
