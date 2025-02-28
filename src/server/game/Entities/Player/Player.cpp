@@ -2208,7 +2208,7 @@ void Player::RegenerateHealth(uint32 diff)
 
         if (! IsInCombat())
         {
-            addValue *= GetTotalAuraMultiplier(SPELL_AURA_MOD_HEALTH_REGEN_PERCENT); PUT BACK
+            addValue *= GetTotalAuraMultiplier(SPELL_AURA_MOD_HEALTH_REGEN_PERCENT);
 
             // Food
             float food = 0.0f;
