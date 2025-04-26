@@ -920,9 +920,9 @@ bool Unit::HasBreakableByDamageCrowdControlAura(Unit* excludeCasterChannel) cons
 
         if (victim->GetTypeId() != TYPEID_PLAYER)
         {
-            // Part of Evade mechanics. DoT's and Thorns / Retribution Aura do not contribute to this
+            /// @fix: Hack to avoid premature leashing
             if (damagetype != DOT && damage > 0 && !victim->GetOwnerGUID().IsPlayer() && (!spellProto || !spellProto->HasAura(SPELL_AURA_DAMAGE_SHIELD)))
-                victim->ToCreature()->SetLastDamagedTime(GameTime::GetGameTime() + MAX_AGGRO_RESET_TIME);
+                victim->ToCreature()->UpdateLeashExtensionTime();
 
             if (attacker)
                 victim->GetThreatManager().AddThreat(attacker, float(damage), spellProto);
@@ -5964,6 +5964,7 @@ bool Unit::AttackStop()
     if (Creature* creature = ToCreature())
     {
         creature->SetNoCallAssistance(false);
+        creature->SetInitialAggroCallAssistance(true);
     }
 
     SendMeleeAttackStop(victim);
@@ -5998,6 +5999,9 @@ void Unit::CombatStop(bool includingCast, bool mutualPvP)
     RemoveAllAttackers();
     if (GetTypeId() == TYPEID_PLAYER)
         ToPlayer()->SendAttackSwingCancelAttack();     // melee and ranged forced attack cancel
+
+    if (Creature* pCreature = ToCreature())
+        pCreature->ClearLastLeashExtensionTimePtr();
 
     if (mutualPvP)
         ClearInCombat();
@@ -8729,6 +8733,11 @@ void Unit::EngageWithTarget(Unit* enemy)
         m_threatManager.AddThreat(enemy, 0.0f, nullptr, true, true);
     else
         SetInCombatWith(enemy);
+
+    // In AC it is set in Unit::SetInCombatWith()
+    // Maybe there is a better place for it.
+    if (Creature* pCreature = ToCreature())
+        pCreature->UpdateLeashExtensionTime();
 }
 
 void Unit::SetImmuneToAll(bool apply, bool keepCombat)

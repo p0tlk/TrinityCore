@@ -232,6 +232,14 @@ bool AssistDelayEvent::Execute(uint64 /*e_time*/, uint32 /*p_time*/)
 {
     if (Unit* victim = ObjectAccessor::GetUnit(m_owner, m_victim))
     {
+        // Link leash timers only on first Call Assistance on aggro
+        bool linkLeashTimers =  false;
+        if (m_owner.IsCreature()) // unsure if we even need to check
+        {
+            linkLeashTimers = m_owner.ToCreature()->IsInitialAggroCallAssistance();
+            m_owner.ToCreature()->SetInitialAggroCallAssistance(false);
+        }
+
         while (!m_assistants.empty())
         {
             Creature* assistant = ObjectAccessor::GetCreature(m_owner, *m_assistants.begin());
@@ -240,7 +248,18 @@ bool AssistDelayEvent::Execute(uint64 /*e_time*/, uint32 /*p_time*/)
             if (assistant && assistant->CanAssistTo(&m_owner, victim))
             {
                 assistant->SetNoCallAssistance(true);
-                assistant->EngageWithTarget(victim);
+                assistant->SetInitialAggroCallAssistance(false); // Set to true on CombatStop
+
+                if (assistant->IsAIEnabled())
+                {
+                    assistant->AI()->AttackStart(victim);
+
+                    // When nearby mobs aggro from another mob's initial call for assistance
+                    // their leash timers become linked and attacking one will keep the rest from evading.
+                    if (assistant->GetVictim() && m_owner.IsCreature() && linkLeashTimers)
+                        assistant->SetLastLeashExtensionTimePtr(m_owner.ToCreature()->GetLastLeashExtensionTimePtr());
+                } else
+                    assistant->EngageWithTarget(victim); // Keep as fallback in case no AI()? otherwise called by AI()->AttackStart() inside Unit::Attack()
             }
         }
     }
@@ -260,9 +279,9 @@ bool ForcedDespawnDelayEvent::Execute(uint64 /*e_time*/, uint32 /*p_time*/)
 
 Creature::Creature(bool isWorldObject): Unit(isWorldObject), MapObject(), m_groupLootTimer(0), lootingGroupLowGUID(0), m_PlayerDamageReq(0), m_lootRecipient(), m_lootRecipientGroup(0), _pickpocketLootRestore(0),
     m_corpseRemoveTime(0), m_respawnTime(0), m_respawnDelay(300), m_corpseDelay(60), m_respawnAggroDelay(5000), m_ignoreCorpseDecayRatio(false), m_wanderDistance(0.0f), m_boundaryCheckTime(2500), m_backpedalTime(MOVE_BACKWARDS_CHECK_INTERVAL), m_encircleTime(MOVE_CIRCLE_CHECK_INTERVAL), m_combatPulseTime(0), m_combatPulseDelay(0), m_reactState(REACT_AGGRESSIVE),
-    m_defaultMovementType(IDLE_MOTION_TYPE), m_spawnId(0), m_equipmentId(0), m_originalEquipmentId(0), m_AlreadyCallAssistance(false), m_AlreadySearchedAssistance(false), m_cannotReachTarget(false), m_cannotReachTimer(0),
+    m_defaultMovementType(IDLE_MOTION_TYPE), m_spawnId(0), m_equipmentId(0), m_originalEquipmentId(0), m_AlreadyCallAssistance(false), m_InitialAggroCallAssistance(true), m_AlreadySearchedAssistance(false), m_cannotReachTarget(false), m_cannotReachTimer(0),
     m_meleeDamageSchoolMask(SPELL_SCHOOL_MASK_NORMAL), m_originalEntry(0), m_homePosition(), m_transportHomePosition(), m_creatureInfo(nullptr), m_creatureData(nullptr), m_detectionDistance(20.0f), _waypointPathId(0),
-    m_formation(nullptr), m_triggerJustAppeared(true), m_respawnCompatibilityMode(false), _lastDamagedTime(0),
+    m_formation(nullptr), m_triggerJustAppeared(true), m_respawnCompatibilityMode(false), m_lastLeashExtensionTime(nullptr),
     _currentWaypointNodeInfo(0, 0), _regenerateHealth(true), _regenerateHealthLock(false), _isMissingCanSwimFlagOutOfCombat(false), m_assistanceTimer(0), m_forcePowerRegen(false),
     m_BaseAttackPower(0), m_BaseRangedAttackPower(0)
 {
@@ -943,6 +962,8 @@ void Creature::Update(uint32 diff)
                     if (CanPeriodicallyCallForAssistance())
                     {
                         SetNoCallAssistance(false);
+                        // If we are here, this means it's not the first CallForAssistance on initial aggro.
+                        SetInitialAggroCallAssistance(false);
                         CallAssistance();
                     }
                     m_assistanceTimer = sWorld->getIntConfig(CONFIG_CREATURE_FAMILY_ASSISTANCE_PERIOD);
@@ -2691,7 +2712,7 @@ bool Creature::CanCreatureAttack(Unit const* victim, bool /*force*/, bool checkA
             return true;
 
         // don't check distance to home position if recently damaged, this should include taunt auras
-        if (!isWorldBoss() && (GetLastDamagedTime() > GameTime::GetGameTime() || HasAuraType(SPELL_AURA_MOD_TAUNT)))
+        if (!isWorldBoss() && (GetLastLeashExtensionTime() + GetLeashTimeForLevel() > GameTime::GetGameTime() || HasAuraType(SPELL_AURA_MOD_TAUNT)))
             return true;
     }
 
@@ -3706,4 +3727,47 @@ bool Creature::CallNearestGuard(Unit* enemy) const
         }
     }
     return false;
+}
+
+std::shared_ptr<time_t> const& Creature::GetLastLeashExtensionTimePtr() const
+ {
+    if (m_lastLeashExtensionTime == nullptr)
+        m_lastLeashExtensionTime = std::make_shared<time_t>(GameTime::GetGameTime());
+    return m_lastLeashExtensionTime;
+}
+
+void Creature::SetLastLeashExtensionTimePtr(std::shared_ptr<time_t> const& timer)
+{
+    m_lastLeashExtensionTime = timer;
+}
+
+void Creature::ClearLastLeashExtensionTimePtr()
+{
+    m_lastLeashExtensionTime.reset();
+}
+
+time_t Creature::GetLastLeashExtensionTime() const
+{
+    return *GetLastLeashExtensionTimePtr();
+}
+
+void Creature::UpdateLeashExtensionTime()
+{
+    (*GetLastLeashExtensionTimePtr()) = GameTime::GetGameTime();
+}
+
+uint32 Creature::GetLeashTimeForLevel() const
+{
+    uint32 clevel = GetLevel();
+
+    if (clevel <= 29)
+        return 11;
+    else if (clevel <= 39)
+        return 12;
+    else if (clevel <= 44)
+        return 13;
+    else if (clevel <= 49)
+        return 14;
+    else // Blanket for all creature past level 50 or invalid GetLevel() values
+        return 15;
 }
