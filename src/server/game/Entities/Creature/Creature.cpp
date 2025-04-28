@@ -3769,3 +3769,12 @@ uint32 Creature::GetLeashTimeForLevel() const
     else // Blanket for all creature past level 50 or invalid GetLevel() values
         return 15;
 }
+
+uint32 Creature::GetModelID() const
+{
+    CreatureDisplayInfoEntry const* display = sCreatureDisplayInfoStore.LookupEntry(GetDisplayId());
+    if (!display)
+        return 0;
+
+    return display->ModelID;
+}
