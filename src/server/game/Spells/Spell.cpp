@@ -574,8 +574,6 @@ m_caster((info->HasAttribute(SPELL_ATTR6_CAST_BY_CHARMER) && caster->GetCharmerO
     m_cast_count = 0;
     m_glyphIndex = 0;
     m_triggeredByAuraSpell  = nullptr;
-    m_triggeredByAuraIsPeriodic = false;
-    m_triggeredByAuraTotalTicks = 0;
     _spellAura = nullptr;
     _dynObjAura = nullptr;
 
@@ -3149,11 +3147,7 @@ SpellCastResult Spell::prepare(SpellCastTargets const& targets, AuraEffect const
     m_spellState = SPELL_STATE_PREPARING;
 
     if (triggeredByAura)
-    {
         m_triggeredByAuraSpell  = triggeredByAura->GetSpellInfo();
-        m_triggeredByAuraIsPeriodic = triggeredByAura->IsPeriodic();
-        m_triggeredByAuraTotalTicks = triggeredByAura->GetTotalTicks();
-    }
 
     // create and add update event for this spell
     _spellEvent = new SpellEvent(this);
