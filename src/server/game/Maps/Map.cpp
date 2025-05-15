@@ -955,7 +955,8 @@ void Map::Update(uint32 t_diff)
                 {
                     for (auto itr = creature->GetFormation()->GetMembersBegin(); itr != creature->GetFormation()->GetMembersEnd(); ++itr)
                     {
-                        itr->first->Update(t_diff);
+                        if (itr->first)
+                            itr->first->Update(t_diff);
                     }
                 }
                 // Don't update formation members, they are updated by the leader
