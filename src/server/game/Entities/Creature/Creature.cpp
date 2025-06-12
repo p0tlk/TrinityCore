@@ -1178,9 +1178,11 @@ bool Creature::AIM_Initialize(CreatureAI* ai)
 
 void Creature::Motion_Initialize()
 {
-    // This is called from AddToWorld as well as Respawn, if any group member respawns we potentially need to adjust the formation
     if (m_formation)
-        m_formation->FormationReset();
+    {
+        if (m_formation->GetLeader() == this)
+            m_formation->FormationReset(false);
+    }
 
     GetMotionMaster()->Initialize();
 }
@@ -2227,9 +2229,9 @@ void Creature::setDeathState(DeathState s)
         }
         /** @epoch-end */
 
-        // We only need to adjust the formation if the current leader dies
+        //Dismiss group if is leader
         if (m_formation && m_formation->GetLeader() == this)
-            m_formation->FormationReset();
+            m_formation->FormationReset(true);
 
         bool needsFalling = (IsFlying() || IsHovering()) && !IsUnderWater();
         SetHover(false, false);
