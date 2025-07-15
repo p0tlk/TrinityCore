@@ -66,7 +66,7 @@ public:
             { "honor",        rbac::RBAC_PERM_COMMAND_MODIFY_HONOR,        false, &HandleModifyHonorCommand,         "" },
             { "hp",           rbac::RBAC_PERM_COMMAND_MODIFY_HP,           false, &HandleModifyHPCommand,            "" },
             { "mana",         rbac::RBAC_PERM_COMMAND_MODIFY_MANA,         false, &HandleModifyManaCommand,          "" },
-            { "money",        rbac::RBAC_PERM_COMMAND_MODIFY_MONEY,        false, &HandleModifyMoneyCommand,         "" },
+            { "money",        rbac::RBAC_PERM_COMMAND_MODIFY_MONEY,        true, &HandleModifyMoneyCommand,         "" },
             { "mount",        rbac::RBAC_PERM_COMMAND_MODIFY_MOUNT,        false, &HandleModifyMountCommand,         "" },
             { "phase",        rbac::RBAC_PERM_COMMAND_MODIFY_PHASE,        false, &HandleModifyPhaseCommand,         "" },
             { "rage",         rbac::RBAC_PERM_COMMAND_MODIFY_RAGE,         false, &HandleModifyRageCommand,          "" },
@@ -519,7 +519,46 @@ public:
         if (!*args)
             return false;
 
-        Player* target = handler->getSelectedPlayerOrSelf();
+        // Extract player name and money amount from arguments
+        char* playerName = nullptr;
+        char* moneyStr = nullptr;
+        std::string argsStr = args;
+
+        // Tokenize to separate player name and money
+        char* token = strtok((char*)args, " ");
+        if (token)
+        {
+            moneyStr = token;
+            token = strtok(nullptr, " ");
+            if (token)
+                playerName = token;
+        }
+
+        // Select target player
+        Player* target = nullptr;
+        if (playerName)
+        {
+            std::string targetName = playerName;
+            if (!normalizePlayerName(targetName))
+            {
+                handler->SendSysMessage(LANG_PLAYER_NOT_FOUND);
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+
+            target = ObjectAccessor::FindConnectedPlayerByName(targetName);
+            if (!target)
+            {
+                handler->SendSysMessage(LANG_PLAYER_NOT_FOUND);
+                handler->SetSentErrorMessage(true);
+                return false;
+            }
+        }
+        else
+        {
+            target = handler->getSelectedPlayerOrSelf();
+        }
+
         if (!target)
         {
             handler->SendSysMessage(LANG_NO_CHAR_SELECTED);

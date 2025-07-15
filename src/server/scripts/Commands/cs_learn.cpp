@@ -44,25 +44,25 @@ public:
     {
         static ChatCommandTable learnAllCommandTable =
         {
-            { "blizzard",   HandleLearnAllGMCommand,         LANG_COMMAND_LEARN_ALL_BLIZZARD_HELP,  rbac::RBAC_PERM_COMMAND_LEARN_ALL_GM,        Console::No },
-            { "debug",      HandleLearnDebugSpellsCommand,   LANG_COMMAND_LEARN_ALL_DEBUG_HELP,     rbac::RBAC_PERM_COMMAND_LEARN,               Console::No },
-            { "crafts",     HandleLearnAllCraftsCommand,     LANG_COMMAND_LEARN_ALL_CRAFTS_HELP,    rbac::RBAC_PERM_COMMAND_LEARN_ALL_CRAFTS,    Console::No },
-            { "default",    HandleLearnAllDefaultCommand,    LANG_COMMAND_LEARN_ALL_DEFAULT_HELP,   rbac::RBAC_PERM_COMMAND_LEARN_ALL_DEFAULT,   Console::No },
-            { "languages",  HandleLearnAllLangCommand,       LANG_COMMAND_LEARN_ALL_LANGUAGES_HELP, rbac::RBAC_PERM_COMMAND_LEARN_ALL_LANG,      Console::No },
-            { "recipes",    HandleLearnAllRecipesCommand,    LANG_COMMAND_LEARN_ALL_RECIPES_HELP,   rbac::RBAC_PERM_COMMAND_LEARN_ALL_RECIPES,   Console::No },
-            { "talents",    HandleLearnAllTalentsCommand,    LANG_COMMAND_LEARN_ALL_TALENTS_HELP,   rbac::RBAC_PERM_COMMAND_LEARN_ALL_TALENTS,   Console::No },
-            { "pettalents", HandleLearnAllPetTalentsCommand, LANG_COMMAND_LEARN_ALL_PETTALENT_HELP, rbac::RBAC_PERM_COMMAND_LEARN_MY_PETTALENTS, Console::No },
+            { "blizzard",   HandleLearnAllGMCommand,         LANG_COMMAND_LEARN_ALL_BLIZZARD_HELP,  rbac::RBAC_PERM_COMMAND_LEARN_ALL_GM,        Console::Yes },
+            { "debug",      HandleLearnDebugSpellsCommand,   LANG_COMMAND_LEARN_ALL_DEBUG_HELP,     rbac::RBAC_PERM_COMMAND_LEARN,               Console::Yes },
+            { "crafts",     HandleLearnAllCraftsCommand,     LANG_COMMAND_LEARN_ALL_CRAFTS_HELP,    rbac::RBAC_PERM_COMMAND_LEARN_ALL_CRAFTS,    Console::Yes },
+            { "default",    HandleLearnAllDefaultCommand,    LANG_COMMAND_LEARN_ALL_DEFAULT_HELP,   rbac::RBAC_PERM_COMMAND_LEARN_ALL_DEFAULT,   Console::Yes },
+            { "languages",  HandleLearnAllLangCommand,       LANG_COMMAND_LEARN_ALL_LANGUAGES_HELP, rbac::RBAC_PERM_COMMAND_LEARN_ALL_LANG,      Console::Yes },
+            { "recipes",    HandleLearnAllRecipesCommand,    LANG_COMMAND_LEARN_ALL_RECIPES_HELP,   rbac::RBAC_PERM_COMMAND_LEARN_ALL_RECIPES,   Console::Yes },
+            { "talents",    HandleLearnAllTalentsCommand,    LANG_COMMAND_LEARN_ALL_TALENTS_HELP,   rbac::RBAC_PERM_COMMAND_LEARN_ALL_TALENTS,   Console::Yes },
+            { "pettalents", HandleLearnAllPetTalentsCommand, LANG_COMMAND_LEARN_ALL_PETTALENT_HELP, rbac::RBAC_PERM_COMMAND_LEARN_MY_PETTALENTS, Console::Yes },
         };
 
         static ChatCommandTable learnMyCommandTable =
         {
-            { "trainer", HandleLearnMySpellsCommand,         LANG_COMMAND_LEARN_MY_TRAINER_HELP,    rbac::RBAC_PERM_COMMAND_LEARN_ALL_MY_SPELLS, Console::No },
-            { "quests",  HandleLearnMyQuestsCommand,         LANG_COMMAND_LEARN_MY_QUESTS_HELP,     rbac::RBAC_PERM_COMMAND_LEARN_ALL_MY_SPELLS, Console::No },
+            { "trainer", HandleLearnMySpellsCommand,         LANG_COMMAND_LEARN_MY_TRAINER_HELP,    rbac::RBAC_PERM_COMMAND_LEARN_ALL_MY_SPELLS, Console::Yes },
+            { "quests",  HandleLearnMyQuestsCommand,         LANG_COMMAND_LEARN_MY_QUESTS_HELP,     rbac::RBAC_PERM_COMMAND_LEARN_ALL_MY_SPELLS, Console::Yes },
         };
 
         static ChatCommandTable learnCommandTable =
         {
-            { "",       HandleLearnCommand,                  LANG_COMMAND_LEARN_HELP,               rbac::RBAC_PERM_COMMAND_LEARN,               Console::No },
+            { "",       HandleLearnCommand,                  LANG_COMMAND_LEARN_HELP,               rbac::RBAC_PERM_COMMAND_LEARN,               Console::Yes },
             { "all",    learnAllCommandTable },
             { "my",     learnMyCommandTable }
         };
@@ -70,21 +70,23 @@ public:
         static ChatCommandTable commandTable =
         {
             { "learn",   learnCommandTable },
-            { "unlearn", HandleUnLearnCommand,               LANG_COMMAND_UNLEARN_HELP,             rbac::RBAC_PERM_COMMAND_UNLEARN,             Console::No },
+            { "unlearn", HandleUnLearnCommand,               LANG_COMMAND_UNLEARN_HELP,             rbac::RBAC_PERM_COMMAND_UNLEARN,             Console::Yes },
         };
         return commandTable;
     }
 
-    static bool HandleLearnCommand(ChatHandler* handler, SpellInfo const* spell, Optional<EXACT_SEQUENCE("all")> allRanks)
+    static bool HandleLearnCommand(ChatHandler* handler, Optional<PlayerIdentifier> player, SpellInfo const* spell, Optional<EXACT_SEQUENCE("all")> allRanks)
     {
-        Player* targetPlayer = handler->getSelectedPlayerOrSelf();
-
-        if (!targetPlayer)
+        if (!player)
+            player = PlayerIdentifier::FromTargetOrSelf(handler);
+        if (!player || !player->IsConnected())
         {
             handler->SendSysMessage(LANG_PLAYER_NOT_FOUND);
             handler->SetSentErrorMessage(true);
             return false;
         }
+
+        Player* targetPlayer = player->GetConnectedPlayer();
 
         if (!SpellMgr::IsSpellValid(spell, handler->GetSession()->GetPlayer()))
         {
@@ -146,14 +148,23 @@ public:
         return true;
     }
 
-    static bool HandleLearnMySpellsCommand(ChatHandler* handler)
+    static bool HandleLearnMySpellsCommand(ChatHandler* handler, Optional<PlayerIdentifier> player)
     {
-        ChrClassesEntry const* classEntry = sChrClassesStore.LookupEntry(handler->GetPlayer()->GetClass());
+        if (!player)
+            player = PlayerIdentifier::FromTargetOrSelf(handler);
+        if (!player || !player->IsConnected())
+        {
+            handler->SendSysMessage(LANG_PLAYER_NOT_FOUND);
+            handler->SetSentErrorMessage(true);
+            return false;
+        }
+
+        Player* targetPlayer = player->GetConnectedPlayer();
+        ChrClassesEntry const* classEntry = sChrClassesStore.LookupEntry(targetPlayer->GetClass());
         if (!classEntry)
             return true;
 
-        Player* player = handler->GetPlayer();
-        std::vector<Trainer::Trainer const*> const& trainers = sObjectMgr->GetClassTrainers(player->GetClass());
+        std::vector<Trainer::Trainer const*> const& trainers = sObjectMgr->GetClassTrainers(targetPlayer->GetClass());
 
         bool hadNew;
         do
@@ -161,24 +172,24 @@ public:
             hadNew = false;
             for (Trainer::Trainer const* trainer : trainers)
             {
-                if (!trainer->IsTrainerValidForPlayer(player))
+                if (!trainer->IsTrainerValidForPlayer(targetPlayer))
                     continue;
                 for (Trainer::Spell const& trainerSpell : trainer->GetSpells())
                 {
-                    if (!trainer->CanTeachSpell(player, &trainerSpell))
+                    if (!trainer->CanTeachSpell(targetPlayer, &trainerSpell))
                         continue;
 
                     if (trainerSpell.IsCastable())
-                        player->CastSpell(player, trainerSpell.SpellId, true);
+                        targetPlayer->CastSpell(targetPlayer, trainerSpell.SpellId, true);
                     else
-                        player->LearnSpell(trainerSpell.SpellId, false);
+                        targetPlayer->LearnSpell(trainerSpell.SpellId, false);
 
                     hadNew = true;
                 }
             }
         } while (hadNew);
 
-        handler->SendSysMessage(LANG_COMMAND_LEARN_CLASS_SPELLS);
+        handler->PSendSysMessage(LANG_COMMAND_LEARN_CLASS_SPELLS, handler->GetNameLink(targetPlayer).c_str());
         return true;
     }
 
@@ -461,16 +472,18 @@ public:
         }
     }
 
-    static bool HandleUnLearnCommand(ChatHandler* handler, SpellInfo const* spell, Optional<EXACT_SEQUENCE("all")> allRanks)
+    static bool HandleUnLearnCommand(ChatHandler* handler, Optional<PlayerIdentifier> player, SpellInfo const* spell, Optional<EXACT_SEQUENCE("all")> allRanks)
     {
-        Player* target = handler->getSelectedPlayer();
-
-        if (!target)
+        if (!player)
+            player = PlayerIdentifier::FromTargetOrSelf(handler);
+        if (!player || !player->IsConnected())
         {
-            handler->SendSysMessage(LANG_NO_CHAR_SELECTED);
+            handler->SendSysMessage(LANG_PLAYER_NOT_FOUND);
             handler->SetSentErrorMessage(true);
             return false;
         }
+
+        Player* target = player->GetConnectedPlayer();
 
         uint32 spellId = spell->Id;
         if (allRanks)
@@ -479,7 +492,7 @@ public:
         if (target->HasSpell(spellId))
             target->RemoveSpell(spellId, false, !allRanks);
         else
-            handler->SendSysMessage(LANG_FORGET_SPELL);
+            handler->PSendSysMessage(LANG_FORGET_SPELL, handler->GetNameLink(target).c_str());
 
         if (GetTalentSpellCost(spellId))
             target->SendTalentsInfoData(false);
