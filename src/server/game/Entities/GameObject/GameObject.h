@@ -22,7 +22,6 @@
 #include "GridObject.h"
 #include "GameObjectData.h"
 #include "Loot.h"
-#include "MapObject.h"
 #include "SharedDefines.h"
 
 class GameObjectAI;
@@ -89,7 +88,7 @@ enum LootState
 // 5 sec for bobber catch
 #define FISHING_BOBBER_READY_TIME 5
 
-class TC_GAME_API GameObject : public WorldObject, public GridObject<GameObject>, public MapObject
+class TC_GAME_API GameObject : public WorldObject, public GridObject<GameObject>
 {
     public:
         explicit GameObject();
@@ -134,7 +133,7 @@ class TC_GAME_API GameObject : public WorldObject, public GridObject<GameObject>
 
         void SaveToDB();
         void SaveToDB(uint32 mapid, uint8 spawnMask, uint32 phaseMask);
-        bool LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap, bool = true); // arg4 is unused, only present to match the signature on Creature
+        bool LoadFromDB(ObjectGuid::LowType spawnId, Map* map, bool addToMap, bool allowDuplicate = true, bool allowAnyPartition = false); // arg4 is unused, only present to match the signature on Creature
         static bool DeleteFromDB(ObjectGuid::LowType spawnId);
 
         void SetOwnerGUID(ObjectGuid owner)

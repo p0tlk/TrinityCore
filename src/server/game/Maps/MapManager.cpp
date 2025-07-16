@@ -23,6 +23,7 @@
 #include "Transport.h"
 #include "GridDefines.h"
 #include "MapInstanced.h"
+#include "MapPartitioned.h"
 #include "InstanceScript.h"
 #include "Config.h"
 #include "World.h"
@@ -40,7 +41,6 @@
 MapManager::MapManager()
     : _nextInstanceId(0), _scheduledScripts(0)
 {
-    i_gridCleanUpDelay = sWorld->getIntConfig(CONFIG_INTERVAL_GRIDCLEAN);
     i_timer.SetInterval(sWorld->getIntConfig(CONFIG_INTERVAL_MAPUPDATE));
 }
 
@@ -48,8 +48,6 @@ MapManager::~MapManager() { }
 
 void MapManager::Initialize()
 {
-    Map::InitStateMachine();
-
     int num_threads(sWorld->getIntConfig(CONFIG_NUMTHREADS));
     // Start mtmaps if needed.
     if (num_threads > 0)
@@ -58,8 +56,8 @@ void MapManager::Initialize()
 
 void MapManager::InitializeVisibilityDistanceInfo()
 {
-    for (MapMapType::iterator iter = i_maps.begin(); iter != i_maps.end(); ++iter)
-        (*iter).second->InitVisibilityDistance();
+    for (auto& [_, mapPtr] : _baseMaps)
+        mapPtr->InitVisibilityDistance();
 }
 
 MapManager* MapManager::instance()
@@ -68,10 +66,53 @@ MapManager* MapManager::instance()
     return &instance;
 }
 
+void MapManager::VisualizePartitions(Unit* owner, Seconds duration)
+{
+    Map* map = FindBaseMap(owner->GetMapId());
+    if (!map)
+        return;
+
+    MapPartitioned* mapPartitioned = map->ToMapPartitioned();
+    if (!mapPartitioned)
+        return;
+
+    mapPartitioned->VisualizePartitions(owner, duration);
+}
+
+std::vector<uint32> MapManager::GetContinentPartitionIds(uint32 mapId)
+{
+    Map* map = FindBaseMap(mapId);
+    if (!map)
+        return {};
+
+    MapPartitioned* mapPartitioned = map->ToMapPartitioned();
+    if (!mapPartitioned)
+        return {};
+
+    return mapPartitioned->GetPartitionIds();
+}
+
+ChainedRange<Map::PlayerList> MapManager::GetContinentPlayers(uint32 mapId)
+{
+    Map* map = FindBaseMap(mapId);
+    if (!map)
+        return ChainedRange<Map::PlayerList>(std::vector<Map::PlayerList*>{});
+
+    MapPartitioned* mapPartitioned = map->ToMapPartitioned();
+    if (!mapPartitioned)
+        return ChainedRange<Map::PlayerList>(std::vector<Map::PlayerList*>{});
+
+    return mapPartitioned->GetAllPlayers();
+}
+
+// This should normally only be called indirectly via CreateMap, but can also be used to
+// create the base maps needed to query for instances or partitions.
 Map* MapManager::CreateBaseMap(uint32 id)
 {
-    ZoneScopedNC("Map* MapManager::CreateBaseMap", WORLD_UPDATE_COLOR)
+    ZoneScopedN("MapManager::CreateBaseMap")
 
+    // BaseMaps are maps that manage other maps.
+    // MapInstanced manages its instances, and MapPartitioned manages its partitions.
     Map* map = FindBaseMap(id);
 
     if (map == nullptr)
@@ -82,55 +123,138 @@ Map* MapManager::CreateBaseMap(uint32 id)
         ASSERT(entry);
 
         if (entry->Instanceable())
-            map = new MapInstanced(id, i_gridCleanUpDelay);
+        {
+            map = new MapInstanced(id);
+            std::unique_ptr<Map> ptr(map); 
+            _baseMaps[id] = std::move(ptr);
+        }
         else
         {
-            map = new Map(id, i_gridCleanUpDelay, 0, REGULAR_DIFFICULTY);
+            map = new MapPartitioned(id);
+            std::unique_ptr<Map> ptr(map); 
+            _baseMaps[id] = std::move(ptr);
+
+            MapPartitioned* mapPartitioned = map->ToMapPartitioned();
+
+            // Create all partitions for this map before loading respawns and corpses
+            for (auto& partitionEntry : mapPartitioned->GetPartitionEntries())
+            {
+                mapPartitioned->CreatePartition(id, partitionEntry.partitionId);
+            }
+
             map->LoadRespawnTimes();
             map->LoadCorpseData();
+            sScriptMgr->OnCreateMap(map);
+
+            for (auto& [_, partitionPtr] : mapPartitioned->GetPartitions())
+            {
+                partitionPtr.get()->LoadRespawnTimes();
+                partitionPtr.get()->LoadCorpseData();
+                // Call on create after loading respawns and corpses for consistency
+                sScriptMgr->OnCreateMap(partitionPtr.get());
+            }
         }
-
-        Trinity::unique_trackable_ptr<Map>& ptr = i_maps[id];
-        ptr.reset(map);
-        map->SetWeakPtr(ptr);
-
-        sScriptMgr->OnCreateMap(map);
     }
 
     ASSERT(map);
     return map;
 }
 
-Map* MapManager::FindBaseNonInstanceMap(uint32 mapId) const
-{
-    Map* map = FindBaseMap(mapId);
-    if (map && map->Instanceable())
-        return nullptr;
-    return map;
-}
-
-Map* MapManager::CreateMap(uint32 id, Player* player, uint32 loginInstanceId)
+// This is used for most of our uses cases, find the map if exists, create it if its not -
+// player is required if the map is instanceable
+Map* MapManager::CreateMap(uint32 id, Position const& pos, Player* player, uint32 loginInstanceId)
 {
     ZoneScopedNC("Map* MapManager::CreateMap", WORLD_UPDATE_COLOR)
 
-    Map* m = CreateBaseMap(id);
+    Map* map = CreateBaseMap(id);
+    if (!map)
+        return nullptr;
 
-    if (m && m->Instanceable())
-        m = ((MapInstanced*)m)->CreateInstanceForPlayer(id, player, loginInstanceId);
+    MapInstanced* mapInstanced = map->ToMapInstanced();
+    if (mapInstanced)
+    {
+        // For GameEventManager, Transports, when we spawn these in an instance map without a player they
+        // go into the base map - Im guessing they update the spawn tables and get replicated for new instances
+        if (!player)
+            return map;
 
-    return m;
+        // Additional Logic to check for existing instance
+        return mapInstanced->CreateInstanceForPlayer(id, player, loginInstanceId);
+    }
+
+    MapPartitioned* mapPartitioned = map->ToMapPartitioned();
+    if (!mapPartitioned)
+        return nullptr;
+
+    uint32 partitionId = mapPartitioned->CalculatePartitionId(pos);
+
+    // Additional logic to check for existing partition
+    return mapPartitioned->CreatePartition(id, partitionId);
 }
 
-Map* MapManager::FindMap(uint32 mapid, uint32 instanceId) const
+uint32 MapManager::CalculatePartitionId(uint32 mapid, Position const& pos)
+{
+    Map* map = CreateBaseMap(mapid);
+    if (!map)
+        return 0;
+
+    MapPartitioned* mapPartitioned = map->ToMapPartitioned();
+    if (!mapPartitioned)
+        return 0;
+
+    return mapPartitioned->CalculatePartitionId(pos);
+}
+
+// Use this for queries where we do not want to create the map directly
+Map* MapManager::FindMap(uint32 mapid, Position const& pos, uint32 instanceId) const
 {
     Map* map = FindBaseMap(mapid);
     if (!map)
         return nullptr;
 
-    if (!map->Instanceable())
-        return instanceId == 0 ? map : nullptr;
+    MapInstanced* mapInstanced = map->ToMapInstanced();
+    if (mapInstanced)
+    {
+        // FindMap does not return the base map for instances
+        return mapInstanced->FindInstance(instanceId);
+    }
 
-    return ((MapInstanced*)map)->FindInstanceMap(instanceId);
+    MapPartitioned* mapPartitioned = map->ToMapPartitioned();
+    if (!mapPartitioned)
+        return nullptr;
+        
+    uint32 partitionId = mapPartitioned->CalculatePartitionId(pos);
+    // For partitions the base map is the default/fallback partition, so return it
+    if (partitionId == mapPartitioned->GetPartitionId())
+        return mapPartitioned;
+
+    return mapPartitioned->FindPartition(partitionId);
+}
+
+Map* MapManager::FindContinent(uint32 mapId) const
+{
+    Map* baseMap = FindBaseMap(mapId);
+    if (!baseMap)
+        return nullptr;
+
+    MapPartitioned* mapPartitioned = baseMap->ToMapPartitioned();
+    if (!mapPartitioned)
+        return nullptr;
+
+    return baseMap;
+}
+
+Map* MapManager::FindPartition(uint32 mapId, uint32 partitionId) const
+{
+    Map* baseMap = FindBaseMap(mapId);
+    if (!baseMap)
+        return nullptr;
+
+    MapPartitioned* mapPartitioned = baseMap->ToMapPartitioned();
+    if (!mapPartitioned)
+        return nullptr;
+
+    return mapPartitioned->FindPartition(partitionId);
 }
 
 Map::EnterState MapManager::PlayerCannotEnter(uint32 mapid, Player* player, bool loginCheck)
@@ -193,7 +317,7 @@ Map::EnterState MapManager::PlayerCannotEnter(uint32 mapid, Player* player, bool
     {
         InstanceGroupBind* boundInstance = group->GetBoundInstance(entry);
         if (boundInstance && boundInstance->save)
-            if (Map* boundMap = sMapMgr->FindMap(mapid, boundInstance->save->GetInstanceId()))
+            if (Map* boundMap = sMapMgr->FindMap(mapid, Position(), boundInstance->save->GetInstanceId()))
                 if (Map::EnterState denyReason = boundMap->CannotEnter(player))
                     return denyReason;
     }
@@ -223,24 +347,70 @@ void MapManager::Update(uint32 diff)
     if (!i_timer.Passed())
         return;
 
-    MapMapType::iterator iter = i_maps.begin();
-    for (; iter != i_maps.end(); ++iter)
+    // map updates can be scheduled to be run in parallel if the updater is activated
+    for (auto& [id, mapPtr] : _baseMaps)
     {
         if (m_updater.activated())
-            m_updater.schedule_update(*iter->second, uint32(i_timer.GetCurrent()));
+            m_updater.schedule_update(*mapPtr, uint32(i_timer.GetCurrent()));
         else
-            iter->second->Update(uint32(i_timer.GetCurrent()));
+            mapPtr->Update(uint32(i_timer.GetCurrent()));
+        
+        if (MapPartitioned* mapPartitioned = mapPtr->ToMapPartitioned())
+        {
+            for (auto& [_, partitionPtr] : mapPartitioned->GetPartitions())
+            {
+                if (m_updater.activated())
+                    m_updater.schedule_update(*partitionPtr, uint32(i_timer.GetCurrent()));
+                else
+                    partitionPtr->Update(uint32(i_timer.GetCurrent()));
+            }
+        }
+
+        // (Previously this was done in MapInstanced::Update, but I prefer not to tie up another thread as a scheduler, thats what this is for)
+        if (MapInstanced* mapInstanced = mapPtr->ToMapInstanced())
+        {
+            auto& instances = mapInstanced->GetInstances();
+            for (auto it = instances.begin(); it != instances.end(); /* no increment here */)
+            {
+                if (it->second->CanUnload(uint32(i_timer.GetCurrent())))
+                {
+                    mapInstanced->DestroyInstance(it); // iterator incremented
+                }
+                else
+                {
+                    if (m_updater.activated())
+                        m_updater.schedule_update(*it->second, uint32(i_timer.GetCurrent()));
+                    else
+                        it->second->Update(uint32(i_timer.GetCurrent()));
+                    ++it;
+                }
+            }
+        }
     }
+
     if (m_updater.activated())
         m_updater.wait();
 
-    for (iter = i_maps.begin(); iter != i_maps.end(); ++iter)
-        iter->second->DelayedUpdate(uint32(i_timer.GetCurrent()));
+    // delayed map updates must be run synchronously
+    for (auto& [id, mapPtr] : _baseMaps)
+    {
+        mapPtr->DelayedUpdate(uint32(i_timer.GetCurrent()));
+
+        // For consistency with Update, we need to call DelayedUpdate on each partition
+        if (MapPartitioned* mapPartitioned = mapPtr->ToMapPartitioned())
+        {
+            for (auto& [_, partitionPtr] : mapPartitioned->GetPartitions())
+                partitionPtr->DelayedUpdate(uint32(i_timer.GetCurrent()));
+        }
+        if (MapInstanced* mapInstanced = mapPtr->ToMapInstanced())
+        {
+            for (auto& [_, instancePtr] : mapInstanced->GetInstances())
+                instancePtr->DelayedUpdate(uint32(i_timer.GetCurrent()));
+        }
+    }
 
     i_timer.SetCurrent(0);
 }
-
-void MapManager::DoDelayedMovesAndRemoves() { }
 
 bool MapManager::ExistMapAndVMap(uint32 mapid, float x, float y)
 {
@@ -266,21 +436,15 @@ bool MapManager::IsValidMAP(uint32 mapid, bool startUp)
 
 void MapManager::UnloadAll()
 {
-    // first unload maps
-    for (auto iter = i_maps.begin(); iter != i_maps.end(); ++iter)
-    {
-        iter->second->UnloadAll();
-
-        sScriptMgr->OnDestroyMap(iter->second.get());
-    }
+    // first unload base maps
+    for (auto& [id, mapPtr] : _baseMaps)
+        mapPtr->UnloadAll();
 
     // then delete them
-    i_maps.clear();
+    _baseMaps.clear();
 
     if (m_updater.activated())
         m_updater.deactivate();
-
-    Map::DeleteStateMachine();
 }
 
 uint32 MapManager::GetNumInstances()
@@ -288,12 +452,12 @@ uint32 MapManager::GetNumInstances()
     std::lock_guard<std::mutex> lock(_mapsLock);
 
     uint32 ret = 0;
-    for (auto const& [_, map] : i_maps)
+    for (auto const& [_, map] : _baseMaps)
     {
         MapInstanced* mapInstanced = map->ToMapInstanced();
         if (!mapInstanced)
             continue;
-        ret += mapInstanced->GetInstancedMaps().size();
+        ret += mapInstanced->GetInstances().size();
     }
     return ret;
 }
@@ -303,13 +467,13 @@ uint32 MapManager::GetNumPlayersInInstances()
     std::lock_guard<std::mutex> lock(_mapsLock);
 
     uint32 ret = 0;
-    for (auto& [_, map] : i_maps)
+    for (auto& [_, map] : _baseMaps)
     {
         MapInstanced* mapInstanced = map->ToMapInstanced();
         if (!mapInstanced)
             continue;
-        MapInstanced::InstancedMaps& maps = mapInstanced->GetInstancedMaps();
-        ret += std::accumulate(maps.begin(), maps.end(), 0u, [](uint32 total, MapInstanced::InstancedMaps::value_type const& value) { return total + value.second->GetPlayers().getSize(); });
+        MapInstanced::Instances& maps = mapInstanced->GetInstances();
+        ret += std::accumulate(maps.begin(), maps.end(), 0u, [](uint32 total, MapInstanced::Instances::value_type const& value) { return total + value.second->GetPlayers().getSize(); });
     }
     return ret;
 }

@@ -24,6 +24,7 @@
 #include "TSBattleground.h"
 #include "TSWorldObject.h"
 #include "TSGameObject.h"
+#include "TSProfile.h"
 // @tswow-end
 #include "Battleground.h"
 #include "ArenaScore.h"
@@ -171,14 +172,25 @@ Battleground::~Battleground()
 
 void Battleground::Update(uint32 diff)
 {
+    ZoneScopedNC("Battleground::Update", MAP_UPDATE_COLOR)
+
     // @tswow-begin
-    FIRE_ID(
-          m_MapId
-        , Battleground,OnUpdateEarly
-        , TSBattleground(m_Map,this)
-        , diff
-    );
-    m_tsWorldEntity.tick(TSBattleground(m_Map,this));
+    {
+        ZoneScopedNC("TSBattleground::OnUpdateEarly", MAP_UPDATE_COLOR)
+
+        FIRE_ID(
+            m_MapId
+            , Battleground,OnUpdateEarly
+            , TSBattleground(m_Map,this)
+            , diff
+        );
+    }
+
+    {
+        ZoneScopedNC("TSBattleground::Tick", MAP_UPDATE_COLOR)
+
+        m_tsWorldEntity.tick(TSBattleground(m_Map,this));
+    }
     // @tswow-end
 
     if (!PreUpdateImpl(diff))
@@ -242,13 +254,18 @@ void Battleground::Update(uint32 diff)
     m_ResetStatTimer += diff;
 
     PostUpdateImpl(diff);
+
     // @tswow-begin
-    FIRE_ID(
-          m_MapId
-        , Battleground,OnUpdateLate
-        , TSBattleground(m_Map,this)
-        , diff
-    );
+    {
+        ZoneScopedN("TSBattleground::OnUpdateLate");
+
+        FIRE_ID(
+            m_MapId
+            , Battleground,OnUpdateLate
+            , TSBattleground(m_Map,this)
+            , diff
+        );
+    }
     // @tswow-end
 }
 

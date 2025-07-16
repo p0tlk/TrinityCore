@@ -21,10 +21,15 @@
 #include "Object.h"
 #include "Map.h"
 #include "MapInstanced.h"
-#include "GridStates.h"
+#include "MapPartitioned.h"
 #include "MapUpdater.h"
 #include "UniqueTrackablePtr.h"
 #include <boost/dynamic_bitset.hpp>
+#include <unordered_map>
+#include <mutex>
+#include <array>
+
+using GridMapGrid = std::array<std::array<GridMap*, MAX_NUMBER_OF_GRIDS>, MAX_NUMBER_OF_GRIDS>;
 
 class Transport;
 struct TransportCreatureProto;
@@ -34,10 +39,22 @@ class TC_GAME_API MapManager
     public:
         static MapManager* instance();
 
-        Map* CreateBaseMap(uint32 mapId);
-        Map* FindBaseNonInstanceMap(uint32 mapId) const;
-        Map* CreateMap(uint32 mapId, Player* player, uint32 loginInstanceId=0);
-        Map* FindMap(uint32 mapId, uint32 instanceId) const;
+        // FOR DEBUGGING
+        void VisualizePartitions(Unit* owner, Seconds duration);
+        std::vector<uint32> GetContinentPartitionIds(uint32 mapId);
+        ChainedRange<Map::PlayerList> GetContinentPlayers(uint32 mapId);
+
+        Map* CreateMap(uint32 mapId, Position const& pos, Player* player = nullptr, uint32 loginInstanceId = 0);
+        uint32 CalculatePartitionId(uint32 mapid, Position const& pos);
+        Map* FindBaseMap(uint32 mapId) const
+        {
+            BaseMaps::const_iterator iter = _baseMaps.find(mapId);
+            return (iter == _baseMaps.end() ? nullptr : iter->second.get());
+        }
+        Map* FindMap(uint32 mapId, Position const& pos, uint32 instanceId = 0) const;
+        Map* FindMap(uint32 mapId, uint32 instanceId = 0) const { return FindMap(mapId, Position(), instanceId); } // To support existing references
+        Map* FindContinent(uint32 mapId) const;
+        Map* FindPartition(uint32 mapId, uint32 partitionId) const;
 
         uint32 GetAreaId(uint32 phaseMask, uint32 mapid, float x, float y, float z) const
         {
@@ -63,14 +80,6 @@ class TC_GAME_API MapManager
 
         void Initialize(void);
         void Update(uint32);
-
-        void SetGridCleanUpDelay(uint32 t)
-        {
-            if (t < MIN_GRID_DELAY)
-                i_gridCleanUpDelay = MIN_GRID_DELAY;
-            else
-                i_gridCleanUpDelay = t;
-        }
 
         void SetMapUpdateInterval(uint32 t)
         {
@@ -112,8 +121,6 @@ class TC_GAME_API MapManager
             return IsValidMapCoord(loc.GetMapId(), loc);
         }
 
-        void DoDelayedMovesAndRemoves();
-
         Map::EnterState PlayerCannotEnter(uint32 mapid, Player* player, bool loginCheck = false);
         void InitializeVisibilityDistanceInfo();
 
@@ -126,7 +133,7 @@ class TC_GAME_API MapManager
         uint32 GenerateInstanceId();
         void RegisterInstanceId(uint32 instanceId);
 
-        MapUpdater * GetMapUpdater() { return &m_updater; }
+        MapUpdater* GetMapUpdater() { return &m_updater; }
 
         template<typename Worker>
         void DoForAllMaps(Worker&& worker);
@@ -138,26 +145,20 @@ class TC_GAME_API MapManager
         void DecreaseScheduledScriptCount() { --_scheduledScripts; }
         void DecreaseScheduledScriptCount(std::size_t count) { _scheduledScripts -= count; }
         bool IsScriptScheduled() const { return _scheduledScripts > 0; }
-
     private:
-        typedef std::unordered_map<uint32, Trinity::unique_trackable_ptr<Map>> MapMapType;
+        typedef std::unordered_map<uint32, std::unique_ptr<Map>> BaseMaps;
         typedef boost::dynamic_bitset<size_t> InstanceIds;
 
         MapManager();
         ~MapManager();
 
-        Map* FindBaseMap(uint32 mapId) const
-        {
-            MapMapType::const_iterator iter = i_maps.find(mapId);
-            return (iter == i_maps.end() ? nullptr : iter->second.get());
-        }
-
         MapManager(MapManager const&) = delete;
         MapManager& operator=(MapManager const&) = delete;
 
+        Map* CreateBaseMap(uint32 mapId);
+
         std::mutex _mapsLock;
-        uint32 i_gridCleanUpDelay;
-        MapMapType i_maps;
+        BaseMaps _baseMaps;
         IntervalTimer i_timer;
 
         InstanceIds _instanceIds;
@@ -173,17 +174,20 @@ void MapManager::DoForAllMaps(Worker&& worker)
 {
     std::lock_guard<std::mutex> lock(_mapsLock);
 
-    for (auto& mapPair : i_maps)
+    for (auto& [_, mapPtr] : _baseMaps)
     {
-        Map* map = mapPair.second.get();
-        if (MapInstanced* mapInstanced = map->ToMapInstanced())
+        Map* baseMap = mapPtr.get();
+        worker(baseMap);
+        if (auto* mapInstanced = baseMap->ToMapInstanced())
         {
-            MapInstanced::InstancedMaps& instances = mapInstanced->GetInstancedMaps();
-            for (auto& instancePair : instances)
-                worker(instancePair.second.get());
+            for (auto& [_, instancePtr] : mapInstanced->GetInstances())
+                worker(instancePtr.get());
         }
-        else
-            worker(map);
+        else if (auto* mapPartitioned = baseMap->ToMapPartitioned())
+        {
+            for (auto& [_, partitionPtr] : mapPartitioned->GetPartitions())
+                worker(partitionPtr.get());
+        }
     }
 }
 
@@ -192,18 +196,22 @@ inline void MapManager::DoForAllMapsWithMapId(uint32 mapId, Worker&& worker)
 {
     std::lock_guard<std::mutex> lock(_mapsLock);
 
-    auto itr = i_maps.find(mapId);
-    if (itr != i_maps.end())
+    auto itr = _baseMaps.find(mapId);
+    if (itr != _baseMaps.end())
     {
         Map* map = itr->second.get();
-        if (MapInstanced* mapInstanced = map->ToMapInstanced())
+        worker(map);
+
+        if (auto* mapInstanced = map->ToMapInstanced())
         {
-            MapInstanced::InstancedMaps& instances = mapInstanced->GetInstancedMaps();
-            for (auto& p : instances)
-                worker(p.second.get());
+            for (auto& [_, instancePtr] : mapInstanced->GetInstances())
+                worker(instancePtr.get());
         }
-        else
-            worker(map);
+        else if (auto* mapPartitioned = map->ToMapPartitioned())
+        {
+            for (auto& [_, partitionPtr] : mapPartitioned->GetPartitions())
+                worker(partitionPtr.get());
+        }
     }
 }
 

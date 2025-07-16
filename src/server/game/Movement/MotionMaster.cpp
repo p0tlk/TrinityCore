@@ -50,6 +50,9 @@
 #include "RandomMovementGenerator.h"
 #include "SplineChainMovementGenerator.h"
 #include "WaypointMovementGenerator.h"
+// @tswow-begin
+#include "TSProfile.h"
+// @tswow-end
 
 inline MovementGenerator* GetIdleMovementGenerator()
 {

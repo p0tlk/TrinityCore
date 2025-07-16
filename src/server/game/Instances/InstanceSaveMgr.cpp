@@ -22,7 +22,6 @@
 #include "DBCStores.h"
 #include "GameTime.h"
 #include "GridNotifiers.h"
-#include "GridStates.h"
 #include "Group.h"
 #include "InstanceScript.h"
 #include "Log.h"
@@ -212,7 +211,7 @@ void InstanceSave::SaveToDB()
     std::string data;
     uint32 completedEncounters = 0;
 
-    Map* map = sMapMgr->FindMap(GetMapId(), m_instanceid);
+    Map* map = sMapMgr->FindMap(GetMapId(), Position(), m_instanceid);
     if (map)
     {
         ASSERT(map->IsDungeon());
@@ -269,7 +268,7 @@ bool InstanceSave::UnloadIfEmpty()
     if (m_playerList.empty() && m_groupList.empty())
     {
         // don't remove the save if there are still players inside the map
-        if (Map* map = sMapMgr->FindMap(GetMapId(), GetInstanceId()))
+        if (Map* map = sMapMgr->FindMap(GetMapId(), Position(), GetInstanceId()))
             if (map->HavePlayers())
                 return true;
 
@@ -617,7 +616,7 @@ void InstanceSaveManager::_ResetInstance(uint32 mapid, uint32 instanceId)
 {
     ZoneScopedNC("InstanceSaveManager::_ResetInstance", WORLD_UPDATE_COLOR)
     TC_LOG_DEBUG("maps", "InstanceSaveMgr::_ResetInstance {}, {}", mapid, instanceId);
-    Map const* map = sMapMgr->CreateBaseMap(mapid);
+    Map const* map = sMapMgr->CreateMap(mapid, {});
     if (!map->Instanceable())
         return;
 
@@ -627,7 +626,7 @@ void InstanceSaveManager::_ResetInstance(uint32 mapid, uint32 instanceId)
 
     DeleteInstanceFromDB(instanceId);                       // even if save not loaded
 
-    Map* iMap = ((MapInstanced*)map)->FindInstanceMap(instanceId);
+    Map* iMap = map->ToMapInstanced()->FindInstance(instanceId);
 
     if (iMap && iMap->IsDungeon())
         ((InstanceMap*)iMap)->Reset(INSTANCE_RESET_RESPAWN_DELAY);
@@ -708,10 +707,10 @@ void InstanceSaveManager::_ResetOrWarnAll(uint32 mapid, Difficulty difficulty, b
     }
 
     // note: this isn't fast but it's meant to be executed very rarely
-    Map* baseMap = sMapMgr->CreateBaseMap(mapid);            // _not_ include difficulty
+    Map* baseMap = sMapMgr->CreateMap(mapid, {});
     uint32 timeLeft;
 
-    for (auto& [_, map] : baseMap->ToMapInstanced()->GetInstancedMaps())
+    for (auto& [_, map] : baseMap->ToMapInstanced()->GetInstances())
     {
         InstanceMap* instanceMap = map->ToInstanceMap();
         if (warn)

@@ -55,6 +55,8 @@ void WorldSession::HandleMoveWorldportAckOpcode(WorldPacket & /*recvData*/)
 
 void WorldSession::HandleMoveWorldportAck()
 {
+    ZoneScopedN("WorldSession::HandleMoveWorldportAck")
+
     Player* player = GetPlayer();
     // ignore unexpected far teleports
     if (!player->IsBeingTeleportedFar())
@@ -85,10 +87,10 @@ void WorldSession::HandleMoveWorldportAck()
     // (Custom) Force InstanceID in case GameMaster is trying to .tele instanceid
     Map* newMap = nullptr;
     if (player->IsGameMaster() && player->GetInstanceId())
-        newMap = sMapMgr->FindMap(loc.GetMapId(), player->GetInstanceId());
+        newMap = sMapMgr->FindMap(loc.GetMapId(), player->GetPosition(), player->GetInstanceId());
 
     if (!newMap)
-        newMap = sMapMgr->CreateMap(loc.GetMapId(), player);
+        newMap = sMapMgr->CreateMap(loc.GetMapId(), loc.GetPosition(), player);
 
     if (player->IsInWorld())
     {
@@ -225,6 +227,8 @@ void WorldSession::HandleMoveWorldportAck()
 
 void WorldSession::HandleMoveTeleportAck(WorldPacket& recvData)
 {
+    ZoneScopedN("WorldSession::HandleMoveTeleportAck")
+
     TC_LOG_DEBUG("network", "MSG_MOVE_TELEPORT_ACK");
     ObjectGuid guid;
 
@@ -276,6 +280,10 @@ void WorldSession::HandleMoveTeleportAck(WorldPacket& recvData)
 
     //lets process all delayed operations on successful teleport
     GetPlayer()->ProcessDelayedOperations();
+
+    // if the player is on a transport force update partitions to transport partition
+    if (GetPlayer()->GetTransport())
+        GetPlayer()->UpdateMapPartition(GetPlayer()->GetTransport()->GetMap());
 }
 
 void WorldSession::HandleMovementOpcodes(WorldPacket& recvData)
