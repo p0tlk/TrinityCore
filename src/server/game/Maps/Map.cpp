@@ -836,7 +836,7 @@ void Map::Update(uint32 t_diff)
     }
 
     /// process any due respawns
-    ProcessRespawns();
+    ProcessRespawns(t_diff);
 
     /// update active cells around players and active objects
     resetMarkedCells();
@@ -2962,13 +2962,15 @@ void Map::DoRespawn(SpawnObjectType type, ObjectGuid::LowType spawnId, uint32 gr
     }
 }
 
-void Map::ProcessRespawns()
+void Map::ProcessRespawns(uint32 t_diff)
 {
     ZoneScopedN("Map::ProcessRespawns")
 
     time_t now = GameTime::GetGameTime();
     uint32 count = 0;
-    uint32 maxCount = sWorld->getIntConfig(CONFIG_MAX_RESPAWN_COUNT_ON_UPDATE);
+    float baseLineDiff = 300.0f; // A normal diff for an active server
+    uint32 scaleFactor = (uint32)std::round(std::min(std::max(t_diff / baseLineDiff, 1.0f), 5.0f)); // Diff scale 1x->5x
+    uint32 maxCount = sWorld->getIntConfig(CONFIG_MAX_RESPAWN_COUNT_ON_UPDATE) * scaleFactor;
     while (!_respawnTimes->empty())
     {
         RespawnInfoWithHandle* next = _respawnTimes->top();
