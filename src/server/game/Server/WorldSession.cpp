@@ -512,8 +512,6 @@ void WorldSession::LogoutPlayer(bool save)
 
     if (_player)
     {
-        sWorld->DecreasePlayerCount(_player->GetTeam());
-
         if (ObjectGuid lguid = _player->GetLootGUID())
             DoLootRelease(lguid);
 
