@@ -43,6 +43,7 @@
 #include "PoolMgr.h"
 #include "ScriptMgr.h"
 #include "Transport.h"
+#include "UpdateTime.h"
 #include "Vehicle.h"
 #include "VMapFactory.h"
 #include "VMapManager2.h"
@@ -282,6 +283,24 @@ i_scriptLock(false), _respawnTimes(std::make_unique<RespawnListContainer>())
     // @tswow-end
 
     MMAP::MMapFactory::createOrGetMMapManager()->loadMapInstance(sWorld->GetDataPath(), GetId(), instanceOrPartitionId);
+}
+
+float Map::GetDiffScaleFactor() const
+{
+    float baseLineDiff = 150.0f; // A normal diff for an active server
+    return std::min(std::max(sWorldUpdateTime.GetLastUpdateTime() / baseLineDiff, 1.0f), 6.0f); // Diff scale 1x->6x
+}
+
+float Map::GetVisibilityRange() const
+{
+    // Scale range from full down to half based on scaleFactor (1x->6x becomes 1.0->0.5)
+    float rangeScale = 1.0f - ((GetDiffScaleFactor() - 1.0f) / 10.0f);
+    return m_VisibleDistance * rangeScale;
+}
+
+float Map::GetVisibilityNotifyPeriod() const
+{
+    return m_VisibilityNotifyPeriod * GetDiffScaleFactor();
 }
 
 void Map::InitVisibilityDistance()
