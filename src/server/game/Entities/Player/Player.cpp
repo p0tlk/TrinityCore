@@ -122,6 +122,8 @@
 #include "TSItem.h"
 #include "TSGameObject.h"
 #include "TSCorpse.h"
+#include "EpochLaunchLog.hpp"
+#include "TSGlobal.h"
 // @tswow-end
 // @epoch-begin
 #include "AnticheatMgr.h"
@@ -1417,10 +1419,20 @@ void Player::Update(uint32 p_time)
         WorldObject const* viewPoint = m_seer;
         if (viewPoint->isNeedNotify(NOTIFY_VISIBILITY_CHANGED) && (this == viewPoint || viewPoint->IsPositionValid()))
         {
-            ZoneScopedN("Player::Update::RelocationNotifier")
-            PlayerRelocationNotifier relocate(*this);
-            Cell::VisitAllObjects(viewPoint, relocate, GetMap()->GetVisibilityRange(), false);
-            relocate.SendToSelf();
+            ZoneScopedN("Player::Update::RelocationNotifier");
+            OnSlowerThan(5,
+                [&]() {
+                    PlayerRelocationNotifier relocate(*this);
+                    Cell::VisitAllObjects(viewPoint, relocate, GetMap()->GetVisibilityRange(), false);
+                    relocate.SendToSelf();
+                },
+                [&](uint64 diff) {
+                    LogEpochLaunchEntry(HighPlayerRelocationDiff
+                        {
+                            .player{GetEpochLaunchPlayerData(this)},
+                            .diff{static_cast<uint8>(std::min(diff, 256ull))}
+                        });
+                });
         }
 
         ResetAllNotifies();
