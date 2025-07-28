@@ -190,7 +190,7 @@ void AuthSession::CheckIpCallback(PreparedQueryResult result)
         do
         {
             Field* fields = result->Fetch();
-            if (fields[0].GetUInt64() != 0)
+            if (fields[0].GetUInt64() != 0) // fields[0] != 0 means a banned IP
             {
                 ByteBuffer pkt;
                 pkt << uint8(AUTH_LOGON_CHALLENGE);
