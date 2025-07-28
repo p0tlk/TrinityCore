@@ -187,25 +187,21 @@ void AuthSession::CheckIpCallback(PreparedQueryResult result)
 {
     if (result)
     {
-        bool banned = false;
         do
         {
             Field* fields = result->Fetch();
             if (fields[0].GetUInt64() != 0)
-                banned = true;
+            {
+                ByteBuffer pkt;
+                pkt << uint8(AUTH_LOGON_CHALLENGE);
+                pkt << uint8(0x00);
+                pkt << uint8(WOW_FAIL_BANNED);
+                SendPacket(pkt);
+                TC_LOG_DEBUG("session", "[AuthSession::CheckIpCallback] Banned ip '{}:{}' tries to login!", GetRemoteIpAddress().to_string(), GetRemotePort());
+                return;
+            }
 
         } while (result->NextRow());
-
-        if (banned)
-        {
-            ByteBuffer pkt;
-            pkt << uint8(AUTH_LOGON_CHALLENGE);
-            pkt << uint8(0x00);
-            pkt << uint8(WOW_FAIL_BANNED);
-            SendPacket(pkt);
-            TC_LOG_DEBUG("session", "[AuthSession::CheckIpCallback] Banned ip '{}:{}' tries to login!", GetRemoteIpAddress().to_string(), GetRemotePort());
-            return;
-        }
     }
 
     AsyncRead();
